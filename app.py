@@ -41,7 +41,7 @@ class Transaction(BaseModel):
 def classify_anomaly(error, threshold):
     if error < threshold:
         return "Low"
-    elif error < threshold * 10:
+    elif error < threshold * 2.5:
         return "Medium"
     else:
         return "High"
