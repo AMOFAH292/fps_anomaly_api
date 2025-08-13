@@ -10,11 +10,6 @@ __pycache__/
 env/
 venv/
 
-# Model checkpoints (optional if you store them elsewhere)
-*.ckpt
-*.h5
-*.pkl
-*.joblib
 
 # System files
 .DS_Store
