@@ -6,17 +6,25 @@ import tensorflow as tf
 import joblib
 import json
 from pydantic import BaseModel
-from datetime import datetime, timezone
+from datetime import datetime
 
-# Load model, pipeline, and threshold
+# Load model, scaler, encoder, and threshold
 model = tf.keras.models.load_model("autoencoder_model.keras")
-print("model loaded succesfully")
-pipeline = joblib.load("main_pipeline.pkl")
-print("pipeline loaded succesfully")
+print("model loaded successfully")
+
+scaler = joblib.load("scaler.pkl")
+print("scaler loaded successfully")
+
+encoder = joblib.load("encoder.pkl")
+print("encoder loaded successfully")
+
 with open("threshold.json", "r") as f:
     threshold_data = json.load(f)
 threshold = threshold_data["threshold"]
-print("threshold loaded succesfully")
+print("threshold loaded successfully")
+
+# Import feature engineering
+from features import feature_engineering
 
 # Pydantic model for request validation
 class Transaction(BaseModel):
@@ -47,34 +55,38 @@ def read_root():
 
 @app.post("/predict")
 async def predict(transaction: Transaction):
-    print("✅ Endpoint triggered")
     try:
-        print("✅ Step 1: Received request")
         # Convert Pydantic model to DataFrame
         df = pd.DataFrame([transaction.dict()])
-        print("✅ Step 2: DataFrame created:", df.shape)
 
-        print("✅ Step 3a: Starting pipeline transform")
-        processed_txn = pipeline.transform(df)
-        print("✅ Step 3b: Pipeline transformed data:", processed_txn.shape)
+        # Apply feature engineering
+        df_fe = feature_engineering(df)
 
-        print("✅ Step 4a: Starting model prediction")
-        reconstructed = model.predict(processed_txn)
-        print("✅ Step 4b: Model returned output:", reconstructed.shape)
+        # Scale numeric columns
+        numeric_cols = ['amount_diff', 'log_time_since_last_payment_days', 'sin_hour', 'cos_hour',
+                        'sin_day', 'cos_day', 'sin_month', 'cos_month', 'amount_ratio']
+        df_fe[numeric_cols] = scaler.transform(df_fe[numeric_cols])
 
-        print("✅ Step 5a: Calculating reconstruction error")
-        error = np.mean(np.square(processed_txn - reconstructed))
-        print("✅ Step 5b: Reconstruction error calculated:", error)
+        # Encode categorical column
+        encoded_payment = encoder.transform(df_fe[['payment_method']])
+        encoded_cols = encoder.get_feature_names_out(['payment_method'])
+        df_encoded = pd.DataFrame(encoded_payment, columns=encoded_cols, index=df_fe.index)
 
-        print("✅ Step 6a: Classifying anomaly")
+        # Combine all features for model
+        binary_cols = ['is_new_device', 'student_name_match', 'is_over_payment']
+        model_input = pd.concat([df_fe[numeric_cols + binary_cols], df_encoded], axis=1)
+
+        # Make prediction
+        reconstructed = model.predict(model_input)
+        error = np.mean(np.square(model_input - reconstructed))
         scale = classify_anomaly(error, threshold)
-        print("✅ Step 6b: Classified anomaly as:", scale)
 
         return JSONResponse(content={
             "reconstruction_error": float(error),
             "threshold": threshold,
             "anomaly_scale": scale
         })
+
     except Exception as e:
         print("❌ ERROR:", str(e))
         raise HTTPException(status_code=500, detail=str(e))
